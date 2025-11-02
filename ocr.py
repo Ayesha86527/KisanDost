@@ -1,50 +1,62 @@
+# app/ocr.py
+"""
+PaddleOCR helper.
+Provides run_ocr(image_path) -> str
+"""
+
 from paddleocr import PaddleOCR
 from pathlib import Path
 from app.config import OCR_LANG, OUTPUT_DIRS
 
-# ---------- SETUP ----------
-# Ensure OCR output directory exists
+# Ensure OCR output dir exists (already created in config, keep safe)
 Path(OUTPUT_DIRS["ocr_outputs"]).mkdir(parents=True, exist_ok=True)
 
-# Initialize OCR model once at import
-print(f"[🧠 Initializing PaddleOCR] Language: {OCR_LANG}")
+# Initialize PaddleOCR model once
+print(f"[OCR] Initializing PaddleOCR (lang={OCR_LANG})")
 ocr = PaddleOCR(lang=OCR_LANG, use_angle_cls=True, show_log=False)
 
 
-# ---------- MAIN FUNCTION ----------
-def run_ocr(image_path, save_output=True):
+def run_ocr(image_path: str, save_output: bool = True) -> str:
     """
-    Run OCR on a given image file path using PaddleOCR.
-    Returns extracted text as a single string.
-    Optionally saves text to outputs/ocr_outputs/.
+    Run OCR on image_path and return extracted text (as a single string).
+    Saves output to outputs/ocr if save_output=True.
     """
     try:
-        print(f"[📸 Running OCR on]: {image_path}")
-        result = ocr.ocr(image_path, cls=True)
+        print(f"[OCR] Running OCR on: {image_path}")
+        result = ocr.ocr(str(image_path), cls=True)
 
-        extracted_text = []
+        extracted = []
+        # result is a list of lines; handle possible structures
         for line in result:
-            for word_info in line:
-                text_segment = word_info[1][0].strip()
-                if text_segment:
-                    extracted_text.append(text_segment)
+            # each line may be list of word boxes
+            if isinstance(line, list):
+                for word_info in line:
+                    # word_info: [box, (text, confidence)]
+                    if isinstance(word_info, (list, tuple)) and len(word_info) > 1:
+                        text = str(word_info[1][0]).strip()
+                        if text:
+                            extracted.append(text)
+            elif isinstance(line, dict):
+                # just in case
+                txt = line.get("text", "").strip()
+                if txt:
+                    extracted.append(txt)
 
-        final_text = "\n".join(extracted_text).strip()
-
+        final_text = "\n".join(extracted).strip()
         if not final_text:
-            print("[⚠️ No text detected]")
+            print("[OCR] No text detected")
             return ""
 
-        # Optionally save extracted text
         if save_output:
-            output_file = OUTPUT_DIRS["ocr_outputs"] / f"ocr_result_{Path(image_path).stem}.txt"
-            with open(output_file, "w", encoding="utf-8") as f:
-                f.write(final_text)
-            print(f"[✅ OCR Text Saved]: {output_file}")
+            out_file = OUTPUT_DIRS["ocr_outputs"] / f"ocr_result_{Path(image_path).stem}.txt"
+            with open(out_file, "w", encoding="utf-8") as fh:
+                fh.write(final_text)
+            print(f"[OCR] Saved OCR text to: {out_file}")
 
-        print(f"[🧾 Extracted OCR Text]: {final_text[:250]}{'...' if len(final_text) > 250 else ''}")
+        print(f"[OCR] Extracted text (first 200 chars): {final_text[:200]}")
         return final_text
 
     except Exception as e:
-        print(f"[❌ OCR Error]: {e}")
+        print(f"[OCR] Error: {e}")
         return ""
+
