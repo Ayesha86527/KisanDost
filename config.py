@@ -6,6 +6,26 @@ from pathlib import Path
 # ==========================
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+# app/config.py
+from dotenv import load_dotenv
+import os
+
+# Load .env automatically
+load_dotenv()
+
+# Get API keys from environment variables
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+DEFAULT_LANGUAGE = "en"  # optional, for voice/ocr modules
+WHISPER_MODEL = "base"    # optional
+TTS_PREFIX = "tts_"       # optional
+OUTPUT_DIRS = "output"    # optional
+
+# Optional: sanity check
+print("Loaded API keys:")
+print("TAVILY_API_KEY:", TAVILY_API_KEY)
+print("GROQ_API_KEY:", GROQ_API_KEY)
+
 
 if not GROQ_API_KEY:
     print("⚠️ [Warning] GROQ_API_KEY not set. Please add it to your environment variables.")
