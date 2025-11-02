@@ -8,7 +8,7 @@ langchain-core==0.2.43
 langchain-community==0.2.11
 langgraph==0.2.15
 tavily-python==0.3.3
-langchain_groq==0.3.0
+langchain_groq==0.1.9
 gtts 
 deep_translator 
 whisper
@@ -19,5 +19,6 @@ requests
 fastapi
 uvicorn
 pydantic
+
 
 
