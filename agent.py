@@ -1,165 +1,135 @@
+"""
+Agent module: initializes LangGraph/Groq model and runs agricultural assistant queries.
+Uses a ReAct-style reasoning agent with a web-search tool (Tavily).
+"""
+
 from typing import TypedDict
 from langchain.tools import StructuredTool
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
-from config import TAVILY_API_KEY, GROQ_API_KEY
+from langchain.schema import SystemMessage, HumanMessage
+from app.config import TAVILY_API_KEY, GROQ_API_KEY
 
 
-# ==============================
-# 🔍 SEARCH TOOL
-# ==============================
-
+# ---------- Tavily Search Tool ----------
 def extract_search_results(raw_results):
-    """
-    Extract structured, readable text from Tavily raw results.
-    """
-    extracted_results = []
+    """Format Tavily search results into readable text."""
+    extracted = []
     for item in raw_results:
-        structured_query = (
-            f"URL: {item.get('url', '')}\n"
-            f"Title: {item.get('title', '')}\n"
-            f"Content: {item.get('content', '')}\n---\n"
-        )
-        extracted_results.append(structured_query)
-    return '\n'.join(extracted_results)
+        url = item.get("url", "")
+        title = item.get("title", "")
+        content = item.get("content", "")
+        block = f"URL: {url}\nTitle: {title}\nContent: {content}\n---\n"
+        extracted.append(block)
+    return "\n".join(extracted)
 
 
-# Initialize Tavily search tool
 web_search = TavilySearchResults(
     search_depth="basic",
     max_results=3,
     tavily_api_key=TAVILY_API_KEY,
     include_raw_content=False,
     include_images=False,
-    max_tokens=2000,
-    include_answer=False
+    include_answer=False,
 )
-
 
 class WebSearchInput(TypedDict):
     query: str
 
-
 def web_search_tool_fn(query: str) -> str:
-    """
-    Search agricultural information (chemicals, fertilizers, pesticides, etc.)
-    Returns summarized search results.
-    """
+    """Search agricultural info (chemicals, fertilizers, etc.)"""
     try:
-        print(f"[🌐 Searching for]: {query}")
-        result = web_search.invoke({"query": query})
-
-        # Tavily can return a string or dict
-        if isinstance(result, str):
-            return result
-
-        raw_results = result.get("results", [])
-        if not raw_results:
+        print(f"[Search] Query: {query}")
+        res = web_search.invoke({"query": query})
+        if isinstance(res, str):
+            return res
+        raw = res.get("results", []) if isinstance(res, dict) else []
+        if not raw:
             return "No relevant results found."
-
-        return extract_search_results(raw_results)
-
+        return extract_search_results(raw)
     except Exception as e:
-        return f"[Search Error]: {str(e)}"
+        return f"[Search Error]: {e}"
 
-
-# Wrap the search function for LangGraph
 web_search_tool = StructuredTool.from_function(
     func=web_search_tool_fn,
     name="web_search_tool",
-    description="Searches for agricultural information using Tavily Search API."
+    description="Search agricultural information using Tavily.",
 )
 
 
-# ==============================
-# 🧠 AGENT INITIALIZATION
-# ==============================
-
+# ---------- Agent Initialization ----------
 def initialize_agent():
-    """
-    Initialize the LangGraph ReAct agent with memory and tools.
-    """
+    """Create and return a LangGraph ReAct agent."""
     try:
-        print("[ Initializing LangGraph Agent...]")
+        print("[Agent] Initializing agent...")
         memory = MemorySaver()
         model = ChatGroq(
-            model="llama-3.1-70b-versatile",  
+            model="openai/gpt-oss-120b",  
             temperature=0.3,
             max_tokens=1500,
-            api_key=GROQ_API_KEY
+            api_key=GROQ_API_KEY,
         )
         tools = [web_search_tool]
         agent_executor = create_react_agent(model, tools, checkpointer=memory)
-        print("[ Agent Initialized Successfully]")
+        print("[Agent] Initialized.")
         return agent_executor
     except Exception as e:
-        print(f"[ Agent Initialization Error]: {e}")
+        print(f"[Agent] Initialization error: {e}")
         return None
 
 
-# ==============================
-# 💬 PROMPT + QUERY PIPELINE
-# ==============================
-
+# ---------- Message Builder ----------
 def chat_completion(user_input: str):
-    """
-    Build structured conversation context for the agent.
-    """
+    """Convert user input into a structured prompt for the agent."""
     return [
-        {
-            "role": "system",
-            "content": """
-You are a helpful agricultural assistant for farmers in Pakistan. 
-You explain the usage, safety, and crop compatibility of agricultural chemicals 
-like pesticides, herbicides, and fertilizers.
-
-Inputs you may receive:
-- Text from OCR (e.g., label details)
-- Farmer’s voice query or typed question
-
-Your goals:
-1. Identify the chemical or fertilizer.
-2. Explain its purpose and safe usage.
-3. Warn about hazards or misuse risks.
-4. If uncertain, use web_search_tool once for reliable agricultural sources.
-5. Keep your answer simple, short, and practical.
-"""
-        },
-        {
-            "role": "user",
-            "content": user_input,
-        },
+        SystemMessage(
+            content=(
+                "You are a helpful agricultural assistant for farmers in Pakistan. "
+                "You explain the usage, safety, and crop compatibility of agricultural "
+                "chemicals like pesticides, herbicides, and fertilizers.\n\n"
+                "If you are unsure, use the web_search_tool once to check reliable sources. "
+                "Keep your answer short, clear, and practical."
+            )
+        ),
+        HumanMessage(content=user_input),
     ]
 
 
+# ---------- Main Query Runner ----------
 def run_query(input_message, agent_executor=None):
-    """
-    Run the agent with given input message and return the final text output.
-    """
+    """Run the ReAct agent and return its textual response."""
     if agent_executor is None:
-        print("[⚠️ Warning]: Agent not initialized. Initializing now...")
         agent_executor = initialize_agent()
+        if agent_executor is None:
+            return "Agent initialization failed."
 
     try:
-        print("[💬 Running Agent Query...]")
+        print("[Agent] Running query...")
         config = {"configurable": {"thread_id": "farmguide-session"}}
         response_text = ""
 
         for step in agent_executor.stream(
             {"messages": input_message}, config, stream_mode="values"
         ):
-            latest_msg = step["messages"][-1]
-            role = latest_msg.get("role", "assistant")
-            content = latest_msg.get("content", "")
-            if role == "assistant":
-                response_text = content  # capture the final answer
+            messages = step.get("messages") if isinstance(step, dict) else getattr(step, "messages", None)
+            if not messages:
+                continue
 
-        print(f"[✅ Agent Response]: {response_text}")
+            latest = messages[-1]
+            role = getattr(latest, "role", None)
+            content = getattr(latest, "content", None)
+
+            if role in ("assistant", "ai") and content:
+                response_text = content
+
+        response_text = response_text or "No answer produced by agent."
+        print(f"[Agent] Response: {response_text[:300]}")
         return response_text
 
     except Exception as e:
-        print(f"[❌ Agent Execution Error]: {e}")
-        return "Sorry, I encountered an issue while processing your query."
+        print(f"[Agent] Execution error: {e}")
+        return f"Agent execution error: {e}"
+
 
